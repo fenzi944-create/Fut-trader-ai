@@ -71,14 +71,33 @@ function bindFiche(){bindFb();const f=$('#cf');if(f)f.onsubmit=e=>{e.preventDefa
 // ---------- OCR
 async function ocr(file,st){if(!window.Tesseract)throw Error('OCR indisponible');
  const w=await Tesseract.createWorker('eng',1,{workerPath:'worker.min.js',corePath:'./',langPath:'./',workerBlobURL:false,logger:m=>{if(st&&m.progress!=null)st.textContent=m.status+' '+Math.round(m.progress*100)+' %'}});
- try{return(await w.recognize(file)).data}finally{await w.terminate()}}
+ let best=null;
+ try{
+  const candidates=[file];
+  try{
+   const img=await new Promise((resolve,reject)=>{const u=URL.createObjectURL(file),im=new Image();im.onload=()=>{URL.revokeObjectURL(u);resolve(im)};im.onerror=()=>{URL.revokeObjectURL(u);reject(Error('Image illisible'))};im.src=u});
+   const scale=Math.min(2.2,Math.max(1,1800/Math.max(img.naturalWidth,img.naturalHeight)));
+   const c=document.createElement('canvas');c.width=Math.round(img.naturalWidth*scale);c.height=Math.round(img.naturalHeight*scale);
+   const cx=c.getContext('2d',{willReadFrequently:true});cx.drawImage(img,0,0,c.width,c.height);
+   const imd=cx.getImageData(0,0,c.width,c.height),d=imd.data;
+   for(let i=0;i<d.length;i+=4){let y=.299*d[i]+.587*d[i+1]+.114*d[i+2];y=Math.max(0,Math.min(255,(y-128)*1.45+128));d[i]=d[i+1]=d[i+2]=y}
+   cx.putImageData(imd,0,0);candidates.push(c);
+  }catch(e){}
+  for(let i=0;i<candidates.length;i++){
+   if(st)st.textContent='Lecture OCR '+(i+1)+'/'+candidates.length+'…';
+   const data=(await w.recognize(candidates[i])).data;
+   const score=(data.confidence||0)+(data.text||'').replace(/\s/g,'').length*.015;
+   if(!best||score>best.score)best={data,score};
+  }
+  return best.data;
+ }finally{await w.terminate()}}
 const nums=t=>[...new Set((t.match(/\d[\d.,\s]{2,}\d|\d{3,}/g)||[]).map(x=>+x.replace(/\D/g,'')).filter(x=>x>=150&&x<=2e7))];
 // ---------- Market (prix manuel + capture)
 function market(){return`<div class="panel"><h2>Market Analyzer · saisie d'un prix</h2>${tracked(ui.pid).length?`<label>Joueur</label><select id="mp">${plist(ui.pid)}</select><label>Version exacte de la carte</label><input id="mv" placeholder="Ex. Or rare 87"><div class="row"><div><label>Prix observé (coins)</label><input id="mpr" type="number" min="1" inputmode="numeric"></div><div><label>Date et heure</label><input id="md" type="datetime-local" value="${nowLocal()}"></div></div><div class="row"><div><label>Plateforme / contexte</label><input id="ml" value="PS5"></div><div><label>Note (facultatif)</label><input id="mn"></div></div><button class="primary" id="ms" style="width:100%;margin-top:12px">Enregistrer le relevé</button>`:empty('Ouvrez d\'abord une fiche dans Joueurs, puis touchez « Saisir un prix ».')}</div>
  <div class="panel"><h2>Depuis une capture</h2><input id="mf" type="file" accept="image/*"><img id="mi" class="hidden" style="width:100%;max-height:220px;object-fit:contain;margin-top:8px;border-radius:12px"><div class="actions"><button id="mo">Lire la capture (OCR)</button></div><div id="mst" class="muted small"></div><textarea id="mt" placeholder="Texte reconnu (corrigeable)"></textarea><div id="mc"></div><div class="notice">L'OCR peut se tromper. Aucune valeur n'est enregistrée sans votre validation : touchez un prix proposé, corrigez les champs ci-dessus puis enregistrez.</div></div>`}
-function bindMarket(){const s=$('#ms');if(!s)return;$('#mf').onchange=e=>{const f=e.target.files[0];if(f){$('#mi').src=URL.createObjectURL(f);$('#mi').classList.remove('hidden')}};
- $('#mo').onclick=async()=>{const f=$('#mf').files[0];if(!f)return $('#mst').textContent='Choisissez une image.';try{const d=await ocr(f,$('#mst'));$('#mt').value=d.text;const p=P($('#mp').value),ln=p&&p.name.split(/\s+/).pop().toLowerCase(),hit=ln&&d.text.toLowerCase().includes(ln),n=nums(d.text);$('#mst').textContent=`Lecture terminée (confiance ${Math.round(d.confidence)} %).`+(hit?'':' ⚠ Le nom du joueur choisi n\'apparaît pas dans le texte.');const dm=d.text.match(/\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4}/);$('#mc').innerHTML=(n.length?'<div class="small muted">Prix candidats (touchez pour choisir) :</div><div class="chips">'+n.slice(0,10).map(x=>`<button class="chip" onclick="document.getElementById('mpr').value=${x}">${x.toLocaleString('fr-FR')}</button>`).join('')+'</div>':'<div class="notice danger">Aucun prix lisible. Refaites une capture plus nette ou saisissez à la main.</div>')+(dm?`<div class="small muted">Date détectée : ${esc(dm[0])} (à reporter manuellement si correcte)</div>`:'')}catch(x){$('#mst').textContent='OCR impossible : '+x.message}};
- s.onclick=()=>{const price=+$('#mpr').value,pid=$('#mp').value,t=new Date($('#md').value).getTime();if(!pid||!(price>0)||isNaN(t))return alert('Joueur, prix et date valides requis.');db.quotes.push({id:uid(),pid,ver:$('#mv').value.trim(),price,t,plat:$('#ml').value.trim(),hasTime:true,dq:'ok',note:$('#mn').value,src:$('#mf').files.length?'capture vérifiée':'manuel'});save();ui.pid=pid;go('hist')}}
+function bindMarket(){const s=$('#ms'),mf=$('#mf'),mo=$('#mo');if(mf)mf.onchange=e=>{const f=e.target.files[0];if(f){$('#mi').src=URL.createObjectURL(f);$('#mi').classList.remove('hidden')}};
+ if(mo)mo.onclick=async()=>{const f=$('#mf').files[0];if(!f)return $('#mst').textContent='Choisissez une image.';try{const d=await ocr(f,$('#mst'));$('#mt').value=d.text;const p=P($('#mp').value),ln=p&&p.name.split(/\s+/).pop().toLowerCase(),hit=ln&&d.text.toLowerCase().includes(ln),n=nums(d.text);$('#mst').textContent=`Lecture terminée (confiance ${Math.round(d.confidence)} %).`+(hit?'':' ⚠ Le nom du joueur choisi n\'apparaît pas dans le texte.');const dm=d.text.match(/\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4}/);$('#mc').innerHTML=(n.length?'<div class="small muted">Prix candidats (touchez pour choisir) :</div><div class="chips">'+n.slice(0,10).map(x=>`<button class="chip" onclick="document.getElementById('mpr').value=${x}">${x.toLocaleString('fr-FR')}</button>`).join('')+'</div>':'<div class="notice danger">Aucun prix lisible. Refaites une capture plus nette ou saisissez à la main.</div>')+(dm?`<div class="small muted">Date détectée : ${esc(dm[0])} (à reporter manuellement si correcte)</div>`:'')}catch(x){$('#mst').textContent='OCR impossible : '+x.message}};
+ if(s)s.onclick=()=>{const price=+$('#mpr').value,pid=$('#mp').value,t=new Date($('#md').value).getTime();if(!pid||!(price>0)||isNaN(t))return alert('Joueur, prix et date valides requis.');db.quotes.push({id:uid(),pid,ver:$('#mv').value.trim(),price,t,plat:$('#ml').value.trim(),hasTime:true,dq:'ok',note:$('#mn').value,src:$('#mf').files.length?'capture vérifiée':'manuel'});save();ui.pid=pid;go('hist')}}
 // ---------- Historique + import OCR (écran de vérification obligatoire)
 const verKey=v=>v||'';const verLab=v=>v||'Version non précisée';
 const vers=id=>[...new Set(db.quotes.filter(q=>q.pid===id).sort((a,b)=>a.t-b.t).map(q=>q.ver||''))];
@@ -95,8 +114,8 @@ function review(){const r=ui.rev;return`<div class="notice"><b>Vérification</b>
 function bindHist(){const p=$('#hp');if(!p)return;p.onchange=()=>{ui.pid=p.value;ui.ver=null;ui.edit=null;R()};const hv=$('#hver');if(hv)hv.onchange=()=>{ui.ver=hv.value;R()};
  if(ui.rev){$('#rx').onclick=()=>{ui.rev=null;R()};$('#rc').onclick=()=>confirmReview()}
  $('#ho').onclick=async()=>{const f=$('#hf').files[0];if(!f)return $('#hs').textContent='Choisissez une image.';ui.rev=null;try{const d=await ocr(f,$('#hs')),rows=Engine.parseHistory(d.text),conf=Math.round(d.confidence);
-  if(conf<40||!rows.length){$('#hs').textContent='';$('#hr').innerHTML='<div class="notice danger">Capture insuffisamment lisible. Veuillez importer une image plus nette.</div>';return}
-  const pl=Engine.detectPlayer(d.text,all());ui.rev={rows,conf,text:d.text,pid:pl?pl.id:'',ver:Engine.detectVersion(d.text)||''};$('#hs').textContent=`${rows.length} point(s) proposé(s).`;R()}catch(x){$('#hs').textContent='OCR impossible : '+x.message}}}
+  if(!rows.length){$('#hs').textContent='';$('#hr').innerHTML=`<div class="notice danger">Aucune ligne date/prix reconnue automatiquement. Le texte OCR reste disponible ci-dessous pour diagnostic ; essayez une capture recadrée sur les dates et les prix.</div><details><summary>Afficher le texte OCR brut</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(d.text||'')}</pre></details>`;return}
+  const pl=Engine.detectPlayer(d.text,all());ui.rev={rows,conf,text:d.text,pid:pl?pl.id:'',ver:Engine.detectVersion(d.text)||''};$('#hs').textContent=`${rows.length} point(s) proposé(s)${conf<40?' · confiance OCR faible : vérifiez chaque ligne':''}.`;R()}catch(x){$('#hs').textContent='OCR impossible : '+x.message}}}
 function confirmReview(){const r=ui.rev,pid=$('#rp').value;if(!pid)return alert('Choisissez le joueur.');const ver=$('#rv').value.trim(),plat=$('#rl').value.trim();let n=0,sk=0;
  r.rows.forEach((x,i)=>{if(!$(`[data-i="${i}"]`).checked)return;const pr=+$(`[data-p="${i}"]`).value,d=$(`[data-d="${i}"]`).value,h=$(`[data-h="${i}"]`).value,t=new Date(d+'T'+(h||'12:00')).getTime();
   if(!(pr>0)||isNaN(t))return sk++;if(db.quotes.some(q=>q.pid==pid&&(q.ver||'')==ver&&q.t==t&&q.price==pr))return sk++;

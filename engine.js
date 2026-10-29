@@ -67,21 +67,36 @@ function portfolio(trades,capital){
  return{pos,real,engaged,bought,proceeds,costSold:sold,perf:sold?real/sold*100:null,
   available:Number.isInteger(capital)?capital-bought+proceeds:null}}
 // ---------- OCR : lecture de texte (propositions à valider)
-function parseHistory(text,opt){opt=opt||{};const now=opt.now??Date.now(),yr=new Date(now).getFullYear();
- const M={jan:0,feb:1,fev:1,févr:1,mar:2,mars:2,apr:3,avr:3,may:4,mai:4,jun:5,juin:5,jul:6,juil:6,aug:7,aou:7,août:7,sep:8,sept:8,oct:9,nov:10,dec:11,déc:11};
- const out=[];text.split(/\n/).forEach(line=>{let d=null,m,yearGuess=false;
-  if(m=line.match(/(\d{4})-(\d{2})-(\d{2})/))d=[+m[1],+m[2]-1,+m[3]];
-  else if(m=line.match(/\b(\d{1,2})[\/.](\d{1,2})(?:[\/.](\d{2,4}))?\b/)){let y=m[3]?+m[3]:yr;if(!m[3])yearGuess=true;if(y<100)y+=2000;d=[y,+m[2]-1,+m[1]]}
-  else if(m=line.match(/\b(\d{1,2})\s+([A-Za-zéûà]{3,5})\.?(?=\s|$)/)){const k=m[2].toLowerCase();if(k in M){d=[yr,M[k],+m[1]];yearGuess=true}}
-  else if(m=line.match(/\b([A-Za-z]{3,4})\.?\s+(\d{1,2})\b/)){const k=m[1].toLowerCase();if(k in M){d=[yr,M[k],+m[2]];yearGuess=true}}
-  if(!d)return;
-  let rest=line.replace(m[0],' '),tm=rest.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/),hh=12,mm=0;if(tm){hh=+tm[1];mm=+tm[2];rest=rest.replace(tm[0],' ')}
-  let dd=new Date(d[0],d[1],d[2],hh,mm);if(isNaN(dd)||dd.getMonth()!==d[1])return;
-  if(yearGuess&&dd.getTime()>now+D){dd=new Date(d[0]-1,d[1],d[2],hh,mm)} // date sans année dans le futur → année précédente
-  if(dd.getTime()>now+D)return;
-  const nums=(rest.match(/\d[\d.,\s]{2,}\d|\d{3,}/g)||[]).map(x=>+x.replace(/\D/g,'')).filter(x=>x>=200&&x<=2e7);
-  if(nums.length)out.push({t:dd.getTime(),hasTime:!!tm,price:nums[0],yearGuess,line:line.trim()})});
- return out}
+function parseHistory(text,opt){
+ opt=opt||{};const now=opt.now??Date.now(),yr=new Date(now).getFullYear(),D=86400000;
+ const M={jan:0,january:0,feb:1,february:1,fev:1,'févr':1,mar:2,march:2,mars:2,apr:3,april:3,avr:3,may:4,mai:4,jun:5,june:5,juin:5,jul:6,july:6,juil:6,aug:7,august:7,aou:7,'août':7,sep:8,sept:8,september:8,oct:9,october:9,nov:10,november:10,dec:11,december:11,'déc':11};
+ const lines=String(text||'').split(/\n/).map(x=>x.trim()).filter(Boolean),out=[],seen=new Set();
+ const dateOf=s=>{let m,y,mo,day,guess=false;
+  if(m=s.match(/\b(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b/)){y=+m[1];mo=+m[2]-1;day=+m[3]}
+  else if(m=s.match(/\b(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2,4}))?\b/)){day=+m[1];mo=+m[2]-1;y=m[3]?+m[3]:yr;guess=!m[3];if(y<100)y+=2000}
+  else if(m=s.match(/\b(\d{1,2})\s+([A-Za-zéûàô]{3,9})\.?\s*(20\d{2})?\b/i)){day=+m[1];mo=M[m[2].toLowerCase()];y=m[3]?+m[3]:yr;guess=!m[3]}
+  else if(m=s.match(/\b([A-Za-zéûàô]{3,9})\.?\s+(\d{1,2})(?:,?\s*(20\d{2}))?\b/i)){mo=M[m[1].toLowerCase()];day=+m[2];y=m[3]?+m[3]:yr;guess=!m[3]}
+  else return null;
+  if(mo==null||day<1||day>31)return null;
+  let dt=new Date(y,mo,day,12,0);if(dt.getFullYear()!==y||dt.getMonth()!==mo||dt.getDate()!==day)return null;
+  if(guess&&dt.getTime()>now+D)dt=new Date(y-1,mo,day,12,0);
+  if(dt.getTime()>now+D)return null;
+  return{date:dt,match:m[0],guess};
+ };
+ const priceFrom=s=>{const a=(s.match(/\d[\d.,\s]{1,}\d|\d{3,}/g)||[]).map(x=>+x.replace(/\D/g,'')).filter(x=>x>=200&&x<=2e7);return a.length?a[0]:null};
+ for(let i=0;i<lines.length;i++){
+  const parsed=dateOf(lines[i]);if(!parsed)continue;
+  let rest=lines[i].replace(parsed.match,' '),tm=rest.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/),hh=12,mm=0;
+  if(tm){hh=+tm[1];mm=+tm[2];rest=rest.replace(tm[0],' ')}
+  let price=priceFrom(rest),sourceLine=lines[i];
+  if(price==null&&i+1<lines.length){const next=lines[i+1];if(!dateOf(next)){const candidate=priceFrom(next);if(candidate!=null){price=candidate;sourceLine+=' | '+next;i++}}}
+  if(price==null)continue;
+  const dt=new Date(parsed.date.getFullYear(),parsed.date.getMonth(),parsed.date.getDate(),hh,mm),key=dt.getTime()+'|'+price;
+  if(seen.has(key))continue;seen.add(key);
+  out.push({t:dt.getTime(),hasTime:!!tm,price,yearGuess:parsed.guess,line:sourceLine});
+ }
+ return out.sort((a,b)=>a.t-b.t);
+}
 const VERS=['TOTY','TOTS','TOTW','TOTT','Icon','Icône','Hero','Héros','Evolution','Évolution','Gold Rare','Gold Common','Rare Gold','Or rare','Or commun','Silver','Bronze'];
 function detectPlayer(text,players){const T=text.toLowerCase(),h=players.filter(p=>T.includes(p.name.toLowerCase()));
  if(h.length===1)return h[0];const l=players.filter(p=>{const w=p.name.split(/\s+/).pop().toLowerCase();return w.length>3&&new RegExp('\\b'+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b').test(T)});return l.length===1?l[0]:null}
