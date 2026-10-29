@@ -66,41 +66,6 @@ function portfolio(trades,capital){
  const engaged=Object.values(pos).reduce((s,x)=>s+x.c,0);
  return{pos,real,engaged,bought,proceeds,costSold:sold,perf:sold?real/sold*100:null,
   available:Number.isInteger(capital)?capital-bought+proceeds:null}}
-// ---------- OCR : lecture de texte (propositions à valider)
-function parseHistory(text,opt){
- opt=opt||{};const now=opt.now??Date.now(),yr=new Date(now).getFullYear(),D=86400000;
- const M={jan:0,january:0,feb:1,february:1,fev:1,'févr':1,mar:2,march:2,mars:2,apr:3,april:3,avr:3,may:4,mai:4,jun:5,june:5,juin:5,jul:6,july:6,juil:6,aug:7,august:7,aou:7,'août':7,sep:8,sept:8,september:8,oct:9,october:9,nov:10,november:10,dec:11,december:11,'déc':11};
- const lines=String(text||'').split(/\n/).map(x=>x.trim()).filter(Boolean),out=[],seen=new Set();
- const dateOf=s=>{let m,y,mo,day,guess=false;
-  if(m=s.match(/\b(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b/)){y=+m[1];mo=+m[2]-1;day=+m[3]}
-  else if(m=s.match(/\b(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2,4}))?\b/)){day=+m[1];mo=+m[2]-1;y=m[3]?+m[3]:yr;guess=!m[3];if(y<100)y+=2000}
-  else if(m=s.match(/\b(\d{1,2})\s+([A-Za-zéûàô]{3,9})\.?\s*(20\d{2})?\b/i)){day=+m[1];mo=M[m[2].toLowerCase()];y=m[3]?+m[3]:yr;guess=!m[3]}
-  else if(m=s.match(/\b([A-Za-zéûàô]{3,9})\.?\s+(\d{1,2})(?:,?\s*(20\d{2}))?\b/i)){mo=M[m[1].toLowerCase()];day=+m[2];y=m[3]?+m[3]:yr;guess=!m[3]}
-  else return null;
-  if(mo==null||day<1||day>31)return null;
-  let dt=new Date(y,mo,day,12,0);if(dt.getFullYear()!==y||dt.getMonth()!==mo||dt.getDate()!==day)return null;
-  if(guess&&dt.getTime()>now+D)dt=new Date(y-1,mo,day,12,0);
-  if(dt.getTime()>now+D)return null;
-  return{date:dt,match:m[0],guess};
- };
- const priceFrom=s=>{const a=(s.match(/\d[\d.,\s]{1,}\d|\d{3,}/g)||[]).map(x=>+x.replace(/\D/g,'')).filter(x=>x>=200&&x<=2e7);return a.length?a[0]:null};
- for(let i=0;i<lines.length;i++){
-  const parsed=dateOf(lines[i]);if(!parsed)continue;
-  let rest=lines[i].replace(parsed.match,' '),tm=rest.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/),hh=12,mm=0;
-  if(tm){hh=+tm[1];mm=+tm[2];rest=rest.replace(tm[0],' ')}
-  let price=priceFrom(rest),sourceLine=lines[i];
-  if(price==null&&i+1<lines.length){const next=lines[i+1];if(!dateOf(next)){const candidate=priceFrom(next);if(candidate!=null){price=candidate;sourceLine+=' | '+next;i++}}}
-  if(price==null)continue;
-  const dt=new Date(parsed.date.getFullYear(),parsed.date.getMonth(),parsed.date.getDate(),hh,mm),key=dt.getTime()+'|'+price;
-  if(seen.has(key))continue;seen.add(key);
-  out.push({t:dt.getTime(),hasTime:!!tm,price,yearGuess:parsed.guess,line:sourceLine});
- }
- return out.sort((a,b)=>a.t-b.t);
-}
-const VERS=['TOTY','TOTS','TOTW','TOTT','Icon','Icône','Hero','Héros','Evolution','Évolution','Gold Rare','Gold Common','Rare Gold','Or rare','Or commun','Silver','Bronze'];
-function detectPlayer(text,players){const T=text.toLowerCase(),h=players.filter(p=>T.includes(p.name.toLowerCase()));
- if(h.length===1)return h[0];const l=players.filter(p=>{const w=p.name.split(/\s+/).pop().toLowerCase();return w.length>3&&new RegExp('\\b'+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b').test(T)});return l.length===1?l[0]:null}
-function detectVersion(text){return VERS.find(v=>new RegExp('\\b'+v+'\\b','i').test(text))||null}
 // ---------- FUTBIN : seul un lien explicite, https et du bon domaine, est accepté
 function futbinUrl(u){try{const x=new URL(u);return x.protocol==='https:'&&(x.hostname==='www.futbin.com'||x.hostname==='futbin.com')&&x.pathname.length>1?x.href:null}catch(e){return null}}
 // ---------- Sauvegarde
@@ -122,6 +87,6 @@ function flatten(c){if(!c||!Array.isArray(c.players))return[];const L=Object.fro
   return{id:p.id,baseId:p.baseId,name:p.name,gender:p.gender||cl.gender||null,nation:p.nation,club:cl.name||null,clubRaw:p.clubRaw||null,clubStatus:cl.mappingStatus||null,league:(L[cl.leagueId]||L[p.leagueId]||{}).name||null,pos:(p.positions||[])[0],positions:p.positions||[],photo:p.photo||null,
    rating:Math.max(0,...conf.map(x=>x.rating||0))||null,ovr:p.ovr||null,special:p.special||null,dupBaseId:!!p.dupBaseId,real:p.real||null,futbin:p.futbin||null,cards:conf,
    status:conf.length?2:(p.inFC27===true?1:0)}})}
-const api={analyze,avgWindow,portfolio,parseHistory,detectPlayer,detectVersion,futbinUrl,sellNet,net,migrate,blank,exportBackup,validateBackup,flatten,RULES};
+const api={analyze,avgWindow,portfolio,futbinUrl,sellNet,net,migrate,blank,exportBackup,validateBackup,flatten,RULES};
 if(typeof module!=='undefined')module.exports=api;else root.Engine=api;
 })(this);
