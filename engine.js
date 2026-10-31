@@ -70,8 +70,8 @@ function portfolio(trades,capital){
 function futbinUrl(u){try{const x=new URL(u);return x.protocol==='https:'&&(x.hostname==='www.futbin.com'||x.hostname==='futbin.com')&&x.pathname.length>1?x.href:null}catch(e){return null}}
 // ---------- Sauvegarde
 const FMT='futai-backup',VER=3;
-const blank=()=>({players:[],quotes:[],trades:[],imports:[],catalogue:null,settings:{capital:null}});
-function migrate(d){const b={...blank(),...d};b.settings={capital:null,...(d.settings||{})};
+const blank=()=>({players:[],quotes:[],trades:[],imports:[],followed:[],catalogue:null,settings:{capital:null}});
+function migrate(d){const b={...blank(),...d};b.followed=[...new Set((Array.isArray(b.followed)?b.followed:[]).filter(x=>typeof x==='string'))];b.settings={capital:null,...(d.settings||{})};
  b.quotes=(b.quotes||[]).map(q=>({plat:q.plat??(q.ctx&&q.ctx!=='Player Sales History'?q.ctx:''),hasTime:q.hasTime??true,dq:q.dq??'ok',...q}));return b}
 function exportBackup(db){return JSON.stringify({format:FMT,version:VER,exportedAt:new Date().toISOString(),data:db})}
 function validateBackup(txt){let o;try{o=JSON.parse(txt)}catch(e){return{error:'Fichier illisible (JSON invalide)'}}
