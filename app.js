@@ -21,7 +21,7 @@ const hasL=(o,k)=>!!o&&Object.prototype.hasOwnProperty.call(o,k);
 const futbin=(p,c)=>Engine.futbinUrl((c?c.futbin:p&&(hasL(db.futbinLinks,p.id)?db.futbinLinks[p.id]:p.futbin))||'');
 function go(t){tab=t;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));R();scrollTo(0,0)}
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>go(b.dataset.tab));
-function R(){V().innerHTML=({dash,players,watch,fiche,market,hist,radar,pf,set})[tab]();({market:bindMarket,hist:bindHist,set:bindSet,players:bindPlayers,watch:bindWatch,pf:bindPf,fiche:bindFiche})[tab]?.()}
+function R(){V().innerHTML=({dash,players,watch,fiche,market,hist,radar,scanner,pf,set})[tab]();({market:bindMarket,hist:bindHist,set:bindSet,players:bindPlayers,watch:bindWatch,scanner:bindScanner,pf:bindPf,fiche:bindFiche})[tab]?.()}
 const empty=t=>`<div class="empty">${t}</div>`;
 // ---------- Dashboard
 function dash(){const A=all(),g=k=>A.filter(p=>k=='U'?!p.gender:p.gender==k).length,cf=A.filter(p=>(p.cards||[]).length).length;
@@ -102,6 +102,27 @@ function anBlock(a){if(!a.ok)return`<div class="muted">${a.msg}</div>`;
  ${a.big.length?`<div class="small muted">Variations ≥ 10 % entre relevés : ${a.big.map(b=>dt(b.t)+' ('+pct(b.pct)+')').join(', ')}</div>`:''}<div class="small muted">Phases : ${a.phases.map(f=>(f.dir>0?'↑':'↓')+' '+new Date(f.from).toLocaleDateString('fr-FR')+'→'+new Date(f.to).toLocaleDateString('fr-FR')).join(' · ')||'—'}</div>`}
 function radar(){const keys=[...new Set(db.quotes.map(q=>q.pid+'|'+(q.ver||'')))],L=keys.map(k=>{const[i,v]=[k.slice(0,k.indexOf('|')),k.slice(k.indexOf('|')+1)];return{p:P(i),v,a:Engine.analyze(qs(i,v||null).filter(q=>(q.ver||'')===v))}}).filter(x=>x.p);
  return`<div class="panel"><h2>Radar IA</h2><div class="notice">Une analyse par joueur et par version de carte, uniquement à partir de vos relevés confirmés.</div>${L.length?L.map(({p,v,a})=>`<details><summary>${esc(p.name)} · ${esc(verLab(v))} · ${fmt(a.current)}</summary>${anBlock(a)}</details>`).join(''):empty('Données indisponibles : saisissez des prix.')}</div>`}
+// ---------- Scanner d'opportunités (heuristique sur les relevés manuels uniquement)
+function scanner(){
+ const keys=[...new Set(db.quotes.filter(q=>q&&q.pid&&q.price>0).map(q=>q.pid+'|'+(q.ver||'')))];
+ const rows=keys.map(k=>{const z=k.indexOf('|'),id=k.slice(0,z),v=k.slice(z+1),p=P(id),raw=qs(id,v||null).filter(q=>(q.ver||'')===v),a=Engine.analyze(raw);if(!p||!a.ok)return null;
+  const age=(Date.now()-a.lastT)/864e5,discount=(a.current/a.median-1)*100;
+  let status='Aucun signal d’achat',rank=0,reason='Le dernier prix n’est pas assez bas par rapport à l’historique.';
+  if(a.level!=='full'){status='Données insuffisantes';reason='Il faut au minimum 5 relevés couvrant 2 jours.'}
+  else if(age>3){status='Relevé ancien';reason='Le dernier relevé date de plus de 3 jours : actualisez-le avant toute décision.'}
+  else if(a.netProfit<=0){status='Rentabilité non démontrée';reason='L’écart historique entre zone d’achat et objectif de revente ne couvre pas la taxe EA de 5 %.'}
+  else if(a.current<=a.buyZone && a.confidence.score>=45){status='Opportunité à étudier';rank=3;reason='Dernier prix au niveau ou sous le 1er quartile historique, avec marge théorique positive après taxe.'}
+  else if(a.current<a.median && a.confidence.score>=35){status='À surveiller';rank=2;reason='Dernier prix sous la médiane historique ; attendre un relevé supplémentaire peut confirmer le signal.'}
+  else {status='Pas de signal d’achat';reason='Le dernier prix n’est pas suffisamment inférieur à la médiane historique.'}
+  return{p,v,a,age,discount,status,rank,reason,raw};
+ }).filter(Boolean);
+ const mode=ui.scanMode||'all',L=rows.filter(x=>mode==='followed'?isFollowed(x.p.id):true).sort((a,b)=>b.rank-a.rank||a.discount-b.discount);
+ const good=L.filter(x=>x.rank===3).length,watchN=L.filter(x=>x.rank===2).length;
+ return `<div class="panel"><h2>Scanner d’opportunités</h2><div class="notice">Analyse automatique de vos relevés manuels uniquement. Aucun prix en direct, aucune couverture du marché complet. Les signaux sont des heuristiques, pas des recommandations garanties.</div><div class="grid"><div class="stat"><span class="muted small">À étudier</span><b>${good}</b></div><div class="stat"><span class="muted small">À surveiller</span><b>${watchN}</b></div><div class="stat"><span class="muted small">Versions analysées</span><b>${L.length}</b></div></div><label>Joueurs analysés</label><select id="scanMode"><option value="all"${mode==='all'?' selected':''}>Tous les joueurs avec relevés</option><option value="followed"${mode==='followed'?' selected':''}>Uniquement mes suivis</option></select></div>
+ <div class="panel cards">${L.length?L.map(x=>{const {p,v,a}=x;return `<div class="player"><div class="row" style="justify-content:space-between"><div><strong>${esc(p.name)}</strong><div class="muted small">${esc(p.club||p.clubRaw||'Club à vérifier')} · ${esc(verLab(v))}</div></div><span class="b ${x.rank===3?'s1':x.rank===2?'s2':'s0'}">${x.status}</span></div><div class="grid" style="margin-top:8px"><div class="stat"><span class="muted small">Dernier prix</span><b>${fmt(a.current)}</b></div><div class="stat"><span class="muted small">Écart à la médiane</span><b class="${x.discount<0?'up':'muted'}">${pct(x.discount)}</b></div><div class="stat"><span class="muted small">Marge théorique nette</span><b class="${a.netProfit>0?'up':'dn'}">${fmt(a.netProfit)}</b></div><div class="stat"><span class="muted small">Confiance des données</span><b>${a.level==='full'?a.confidence.level:'Faible'}</b></div></div><div class="muted small" style="margin-top:8px">${esc(x.reason)} Dernier relevé : ${dt(a.lastT)}.</div><div class="actions"><button onclick="sel='${p.id}';go('fiche')">Fiche</button><button onclick="ui.pid='${p.id}';ui.ver='${esc(v)}';go('hist')">Historique</button><button onclick="ui.pid='${p.id}';go('market')">Nouveau prix</button></div></div>`}).join(''):empty(mode==='followed'?'Aucun de vos joueurs suivis ne possède de relevé exploitable.':'Aucun relevé de prix à analyser. Enregistrez des observations dans Market.')}</div>`;
+}
+function bindScanner(){const s=$('#scanMode');if(s)s.onchange=()=>{ui.scanMode=s.value;R()}}
+
 // ---------- Portefeuille
 const pfr=()=>Engine.portfolio(db.trades,db.settings.capital);
 function pfSummary(){const r=pfr();if(r.error)return`<div class="notice danger">${r.error}</div>`;
